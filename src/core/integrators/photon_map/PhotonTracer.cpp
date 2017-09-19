@@ -33,20 +33,52 @@ static inline Vec3f exponentialIntegral(Vec3f a, Vec3f b, float t0, float t1)
 }
 
 static inline bool intersectBeam1D(const PhotonBeam &beam, const Ray &ray, const Vec3pf *bounds,
-        float tMin, float tMax, float radius, float &invSinTheta, float &t)
+                                   float tMin, float tMax, float radius, float &invSinTheta, float &t)
 {
-    Vec3f l = beam.p0 - ray.pos();
-    Vec3f u = l.cross(beam.dir).normalized();
+    /*
+     * Code originally from smallUPDT
+     */
 
-    Vec3f n = beam.dir.cross(u);
-    t = n.dot(l)/n.dot(ray.dir());
-    Vec3f hitPoint = ray.pos() + ray.dir()*t;
 
-    invSinTheta = 1.0f/std::sqrt(max(0.0f, 1.0f - sqr(ray.dir().dot(beam.dir))));
-    if (std::abs(u.dot(hitPoint - beam.p0)) > radius)
+    // Compute the direction and the max distance
+    // Of the photon beams
+    const Vec3f d1d2c = ray.dir().cross(beam.dir);
+    const float
+      sinThetaSqr = d1d2c.dot(d1d2c); // Square of the sine between the two lines (||cross(d1, d2)|| = sinTheta).
+
+    const float ad = (beam.p0 - ray.pos()).dot(d1d2c);
+
+    // Lines too far apart.
+    if (ad * ad >= (radius * radius) * sinThetaSqr)
         return false;
 
+    // Cosine between the two lines.
+    const float d1d2 = ray.dir().dot(beam.dir);
+    const float d1d2Sqr = d1d2 * d1d2;
+    const float d1d2SqrMinus1 = d1d2Sqr - 1.0f;
+
+    // Parallel lines?
+    if (d1d2SqrMinus1 < 1e-5f && d1d2SqrMinus1 > -1e-5f)
+        return false;
+
+    const float d1O1 = ray.dir().dot(ray.pos());
+    const float d1O2 = ray.dir().dot(beam.p0);
+
+    t = (d1O1 - d1O2 - d1d2 * (beam.dir.dot(ray.pos()) - beam.dir.dot(beam.p0))) / d1d2SqrMinus1;
+
+    if (t <= tMin || t >= tMax)
+        return false;
+
+    // v: distance to intersection along this beam
+    const float v = (t + d1O1 - d1O2) / d1d2;
+
+    // Out of range on ray 2.
+    if (v < 0.0 || v > beam.length)
+        return false;
+
+    // Out of range on ray 1.
     if (bounds) {
+        Vec3f hitPoint = ray.pos() + ray.dir()*t;
         int majorAxis = std::abs(beam.dir).maxDim();
         float intervalMin = min((*bounds)[majorAxis][0], (*bounds)[majorAxis][1]);
         float intervalMax = max((*bounds)[majorAxis][2], (*bounds)[majorAxis][3]);
@@ -55,15 +87,14 @@ static inline bool intersectBeam1D(const PhotonBeam &beam, const Ray &ray, const
             return false;
     }
 
-    if (t < tMin || t > tMax)
-        return false;
+    const float sinThetaConst = std::sqrt(sinThetaSqr);
 
-    float s = beam.dir.dot(hitPoint - beam.p0);
-    if (s < 0.0f || s > beam.length)
-        return false;
+    invSinTheta = 1 / sinThetaConst;
 
     return true;
 }
+
+
 static inline bool intersectPlane0D(const Ray &ray, float tMin, float tMax, Vec3f p0, Vec3f p1, Vec3f p2,
         float &invDet, float &farT, Vec2f &uv)
 {
